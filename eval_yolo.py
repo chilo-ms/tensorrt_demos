@@ -61,27 +61,55 @@ def check_args(args):
     if not os.path.isfile(args.annotations):
         sys.exit('%s is not a valid file' % args.annotations)
 
+def parse_annotations(filename):
+    import json
+    annotations = {}
+    with open(filename, 'r') as f:
+        annotations = json.load(f)
 
-def generate_results(trt_yolo, imgs_dir, jpgs, results_file, non_coco):
+    img_name_to_img_id = {}
+    for image in annotations["images"]:
+        file_name = image["file_name"]
+        img_name_to_img_id[file_name] = image["id"]
+
+    return img_name_to_img_id
+
+def generate_results(trt_yolo, imgs_dir, jpgs, results_file, non_coco, annotations):
     """Run detection on each jpg and write results to file."""
     results = []
-    for jpg in progressbar(jpgs):
+    img_name_to_img_id = parse_annotations(annotations)
+    # for jpg in progressbar(jpgs):
+    for jpg in jpgs:
         img = cv2.imread(os.path.join(imgs_dir, jpg))
-        image_id = int(jpg.split('.')[0].split('_')[-1])
-        boxes, confs, clss = trt_yolo.detect(img, conf_th=1e-2)
-        for box, conf, cls in zip(boxes, confs, clss):
-            x = float(box[0])
-            y = float(box[1])
-            w = float(box[2] - box[0] + 1)
-            h = float(box[3] - box[1] + 1)
-            cls = int(cls)
-            cls = cls if non_coco else yolo_cls_to_ssd[cls]
-            results.append({'image_id': image_id,
-                            'category_id': cls,
-                            'bbox': [x, y, w, h],
-                            'score': float(conf)})
-    with open(results_file, 'w') as f:
-        f.write(json.dumps(results, indent=4))
+        # image_id = int(jpg.split('.')[0].split('_')[-1])
+        image_id = img_name_to_img_id[jpg]
+
+        # boxes, confs, clss = trt_yolo.detect(img, conf_th=0.35)
+        # for box, conf, cls in zip(boxes, confs, clss):
+            # x = float(box[0])
+            # y = float(box[1])
+            # w = float(box[2] - box[0] + 1)
+            # h = float(box[3] - box[1] + 1)
+            # cls = int(cls)
+            # cls = cls if non_coco else yolo_cls_to_ssd[cls]
+            # if cls == 1:
+                # results.append({'image_id': image_id,
+                                # # 'category_id': cls,
+                                # 'category_id': 0,
+                                # 'bbox': [x, y, w, h],
+                                # 'score': float(conf)})
+
+        boxes, confs = trt_yolo.detect(img, conf_th=0.35)
+        for box, conf in zip(boxes, confs):
+                results.append({'image_id': image_id,
+                                'category_id': 0, # only person
+                                'bbox': box,
+                                'score': float(conf)})
+    # print(results)
+    # with open(results_file, 'w') as f:
+        # f.write(json.dumps(results, indent=4))
+
+    return results
 
 
 def main():
@@ -97,13 +125,14 @@ def main():
     trt_yolo = TrtYOLO(args.model, args.category_num, args.letter_box)
 
     jpgs = [j for j in os.listdir(args.imgs_dir) if j.endswith('.jpg')]
-    generate_results(trt_yolo, args.imgs_dir, jpgs, results_file,
-                     non_coco=args.non_coco)
+    results = generate_results(trt_yolo, args.imgs_dir, jpgs, results_file,
+                     non_coco=args.non_coco, annotations=args.annotations)
 
     # Run COCO mAP evaluation
     # Reference: https://github.com/cocodataset/cocoapi/blob/master/PythonAPI/pycocoEvalDemo.ipynb
     cocoGt = COCO(args.annotations)
-    cocoDt = cocoGt.loadRes(results_file)
+    # cocoDt = cocoGt.loadRes(results_file)
+    cocoDt = cocoGt.loadRes(results)
     imgIds = sorted(cocoGt.getImgIds())
     cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
     cocoEval.params.imgIds = imgIds

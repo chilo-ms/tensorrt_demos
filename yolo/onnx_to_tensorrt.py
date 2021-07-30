@@ -91,8 +91,12 @@ def build_engine(model_name, do_int8, dla_core, verbose=False):
     """Build a TensorRT engine from ONNX using the older API."""
     cfg_file_path = model_name + '.cfg'
     parser = DarkNetParser()
-    layer_configs = parser.parse_cfg_file(cfg_file_path)
-    net_h, net_w = get_h_and_w(layer_configs)
+    # layer_configs = parser.parse_cfg_file(cfg_file_path)
+    # net_h, net_w = get_h_and_w(layer_configs)
+    net_h = 288
+    net_w = 512
+    print(net_h)
+    print(net_w)
 
     print('Loading the ONNX file...')
     onnx_data = load_onnx(model_name)
@@ -112,11 +116,12 @@ def build_engine(model_name, do_int8, dla_core, verbose=False):
             return None
         network = set_net_batch(network, MAX_BATCH_SIZE)
 
-        print('Adding yolo_layer plugins...')
-        network = add_yolo_plugins(network, model_name, TRT_LOGGER)
+        # print('Adding yolo_layer plugins...')
+        # network = add_yolo_plugins(network, model_name, TRT_LOGGER)
 
         print('Building an engine.  This would take a while...')
         print('(Use "--verbose" or "-v" to enable verbose logging.)')
+        print(trt.__version__)
         if trt.__version__[0] < '7':  # older API: build_cuda_engine()
             if dla_core >= 0:
                 raise RuntimeError('DLA core not supported by old API')
@@ -137,7 +142,8 @@ def build_engine(model_name, do_int8, dla_core, verbose=False):
             config.set_flag(trt.BuilderFlag.FP16)
             profile = builder.create_optimization_profile()
             profile.set_shape(
-                '000_net',                          # input tensor name
+                # '000_net',                          # input tensor name
+                'images',                          # input tensor name
                 (MAX_BATCH_SIZE, 3, net_h, net_w),  # min shape
                 (MAX_BATCH_SIZE, 3, net_h, net_w),  # opt shape
                 (MAX_BATCH_SIZE, 3, net_h, net_w))  # max shape
@@ -146,7 +152,7 @@ def build_engine(model_name, do_int8, dla_core, verbose=False):
                 from calibrator import YOLOEntropyCalibrator
                 config.set_flag(trt.BuilderFlag.INT8)
                 config.int8_calibrator = YOLOEntropyCalibrator(
-                    'calib_images', (net_h, net_w),
+                    'calib_images_1000', (net_h, net_w),
                     'calib_%s.bin' % model_name)
                 config.set_calibration_profile(profile)
             if dla_core >= 0:

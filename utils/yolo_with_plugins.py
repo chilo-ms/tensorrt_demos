@@ -12,6 +12,8 @@ import numpy as np
 import cv2
 import tensorrt as trt
 import pycuda.driver as cuda
+import torch
+import torchvision
 
 
 try:
@@ -262,6 +264,67 @@ def do_inference_v2(context, bindings, inputs, outputs, stream):
     # Return only the host outputs.
     return [out.host for out in outputs]
 
+def xywh2xyxy(x):
+    # Convert nx4 boxes from [x, y, w, h] to [x1, y1, x2, y2] where xy1=top-left, xy2=bottom-right
+    y = np.zeros_like(x)
+    y[:, 0] = x[:, 0] - x[:, 2] / 2  # top left x
+    y[:, 1] = x[:, 1] - x[:, 3] / 2  # top left y
+    y[:, 2] = x[:, 0] + x[:, 2] / 2  # bottom right x
+    y[:, 3] = x[:, 1] + x[:, 3] / 2  # bottom right y
+    return y
+
+def scale_coords(img1_shape, coords, img0_shape, ratio_pad=None):
+    # Rescale coords (xyxy) from img1_shape to img0_shape
+    if ratio_pad is None:  # calculate from img0_shape
+        # gain = max(img1_shape) / max(img0_shape)  # gain  = old / new
+        gain = min(img1_shape[0] / img0_shape[0], img1_shape[1] / img0_shape[1])
+        pad = (img1_shape[1] - img0_shape[1] * gain) / 2, (img1_shape[0] - img0_shape[0] * gain) / 2  # wh padding
+    else:
+        gain = ratio_pad[0][0]
+        pad = ratio_pad[1]
+
+    coords[:, [0, 2]] -= pad[0]  # x padding
+    coords[:, [1, 3]] -= pad[1]  # y padding
+    coords[:, :4] /= gain
+    return coords
+
+def post_process_with_nms(predictions, image_height, image_width, conf_thres=0.35, nms_thres=0.35):
+    """Performs NMS and score thresholding
+        """
+    final_output = []
+    input_w = 512
+    input_h = 288
+    # print(predictions[0])
+    # print(predictions[0].shape)
+    predictions[0] = np.reshape(predictions[0], (9072, 1))
+    # print(predictions[0].shape)
+    scores = predictions[0][:, 0]
+    keep_idx = scores >= conf_thres
+    predictions[1] = np.reshape(predictions[1], (9072, 4)) 
+    boxes_ = predictions[1][keep_idx, :]
+    boxes_[:, 0] *= input_w  #x
+    boxes_[:, 1] *= input_h  #y
+    boxes_[:, 2] *= input_w  #w
+    boxes_[:, 3] *= input_h  #h
+    boxes_ = xywh2xyxy(boxes_)
+    img0_shape = (image_height, image_width)
+    img1_shape = (input_h, input_w)
+    # bbox = self.scale_coords(img1_shape, bbox, img0_shape)
+    boxes_ = scale_coords(img1_shape, boxes_, img0_shape)
+    # boxes_ = scale_coords(img.shape[2:], boxes_, img0.shape[0:2])
+    boxes_ = torch.from_numpy(boxes_)
+    scores = torch.from_numpy(scores[keep_idx])
+    if scores.dim() == 0:
+        final_output.append(torch.empty(0, 5).numpy())
+        return final_output
+        # continue
+    keep_idx = torchvision.ops.nms(boxes_, scores, nms_thres)
+    scores = scores[keep_idx].view(-1, 1)
+    boxes_ = boxes_[keep_idx].view(-1, 4)
+    output = torch.cat((boxes_, scores), dim=-1)
+    final_output.append(output.numpy())
+    return final_output
+
 
 class TrtYOLO(object):
     """TrtYOLO class encapsulates things needed to run TRT YOLO."""
@@ -322,12 +385,49 @@ class TrtYOLO(object):
         if self.cuda_ctx:
             self.cuda_ctx.pop()
 
-        boxes, scores, classes = _postprocess_yolo(
-            trt_outputs, img.shape[1], img.shape[0], conf_th,
-            nms_threshold=0.5, input_shape=self.input_shape,
-            letter_box=letter_box)
+        # print("before NMS...")
+        # print(trt_outputs[0].shape)
+        # print(trt_outputs[1].shape)
+        # print(trt_outputs)
+        #
+        # ONNX model output are (1, 9072, 1) and (1, 9072, 4)
+        # TRT network output are (9072,) and (36288,) 
+        #
 
-        # clip x1, y1, x2, y2 within original image
-        boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, img.shape[1]-1)
-        boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, img.shape[0]-1)
-        return boxes, scores, classes
+        bboxes = []
+        scores = []
+
+        # for j in range(len(trt_outputs)):
+        # output = trt_outputs[j]
+        image_height = img.shape[0] 
+        image_width = img.shape[1] 
+        dets = post_process_with_nms(trt_outputs, image_height, image_width)[0]
+
+        for i in range(dets.shape[0]):
+            x1 = dets[i, 0]
+            y1 = dets[i, 1]
+            x2 = dets[i, 2]
+            y2 = dets[i, 3]
+            score = dets[i, 4]
+
+            bbox = [x1, y1, x2-x1, y2-y1]
+
+            scores.append(score)
+            bboxes.append(bbox)
+            # results.append({
+                # "image_id": int(image_id),
+                # "category_id": int(id),
+                # "bbox": list(bbox),
+                # "score": score 
+            # })
+        return bboxes, scores
+
+        # boxes, scores, classes = _postprocess_yolo(
+            # trt_outputs, img.shape[1], img.shape[0], conf_th,
+            # nms_threshold=0.5, input_shape=self.input_shape,
+            # letter_box=letter_box)
+
+        # # clip x1, y1, x2, y2 within original image
+        # boxes[:, [0, 2]] = np.clip(boxes[:, [0, 2]], 0, img.shape[1]-1)
+        # boxes[:, [1, 3]] = np.clip(boxes[:, [1, 3]], 0, img.shape[0]-1)
+        # return boxes, scores, classes

@@ -41,6 +41,12 @@ def parse_args():
     parser.add_argument(
         '-l', '--letter_box', action='store_true',
         help='inference with letterboxed image [False]')
+    parser.add_argument(
+        '-i', '--image', type=str, required=True,
+        help=('[yolov3-tiny|yolov3|yolov3-spp|yolov4-tiny|yolov4|'
+              'yolov4-csp|yolov4x-mish]-[{dimension}], where '
+              '{dimension} could be either a single number (e.g. '
+              '288, 416, 608) or 2 numbers, WxH (e.g. 416x256)'))
     args = parser.parse_args()
     return args
 
@@ -82,17 +88,17 @@ def loop_and_detect(cam, trt_yolo, conf_th, vis):
 
 def main():
     args = parse_args()
-    if args.category_num <= 0:
-        raise SystemExit('ERROR: bad category_num (%d)!' % args.category_num)
-    if not os.path.isfile('yolo/%s.trt' % args.model):
-        raise SystemExit('ERROR: file (yolo/%s.trt) not found!' % args.model)
+    # if args.category_num <= 0:
+        # raise SystemExit('ERROR: bad category_num (%d)!' % args.category_num)
+    # if not os.path.isfile('yolo/%s.trt' % args.model):
+        # raise SystemExit('ERROR: file (yolo/%s.trt) not found!' % args.model)
 
-    cam = Camera(args)
-    if not cam.isOpened():
-        raise SystemExit('ERROR: failed to open camera!')
+    # cam = Camera(args)
+    # if not cam.isOpened():
+        # raise SystemExit('ERROR: failed to open camera!')
 
-    cls_dict = get_cls_dict(args.category_num)
-    vis = BBoxVisualization(cls_dict)
+    # cls_dict = get_cls_dict(args.category_num)
+    # vis = BBoxVisualization(cls_dict)
     trt_yolo = TrtYOLO(args.model, args.category_num, args.letter_box)
 
     open_window(

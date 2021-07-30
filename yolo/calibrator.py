@@ -83,8 +83,40 @@ def _preprocess_yolo(img, input_shape):
     img /= 255.0
     return img
 
+def letterbox(img, new_shape=(416, 416), color=(114, 114, 114), auto=True, scaleFill=False, scaleup=True):
+    # Resize image to a 32-pixel-multiple rectangle https://github.com/ultralytics/yolov3/issues/232
+    shape = img.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
 
-class YOLOEntropyCalibrator(trt.IInt8EntropyCalibrator2):
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[0], new_shape[1] / shape[1])
+    if not scaleup:  # only scale down, do not scale up (for better test mAP)
+        r = min(r, 1.0)
+
+    # Compute padding
+    ratio = r, r  # width, height ratios
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[1] - new_unpad[0], new_shape[0] - new_unpad[1]  # wh padding
+    if auto:  # minimum rectangle
+        dw, dh = np.mod(dw, 64), np.mod(dh, 64)  # wh padding
+    elif scaleFill:  # stretch
+        dw, dh = 0.0, 0.0
+        new_unpad = new_shape
+        ratio = new_shape[0] / shape[1], new_shape[1] / shape[0]  # width, height ratios
+
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:  # resize
+        img = cv2.resize(img, new_unpad, interpolation=cv2.INTER_LINEAR)
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    img = cv2.copyMakeBorder(img, top, bottom, left, right, cv2.BORDER_CONSTANT, value=color)  # add border
+    return img, ratio, (dw, dh)
+
+
+class YOLOEntropyCalibrator(trt.IInt8LegacyCalibrator):
     """YOLOEntropyCalibrator
 
     This class implements TensorRT's IInt8EntropyCalibtrator2 interface.
@@ -133,7 +165,15 @@ class YOLOEntropyCalibrator(trt.IInt8EntropyCalibrator2):
                 self.img_dir, self.jpgs[self.current_index + i])
             img = cv2.imread(img_path)
             assert img is not None, 'failed to read %s' % img_path
-            batch.append(_preprocess_yolo(img, self.net_hw))
+            # batch.append(_preprocess_yolo(img, self.net_hw))
+            print(self.net_hw)
+            img = letterbox(img, new_shape=self.net_hw, auto=False)[0]
+            img = img[:, :, ::-1].transpose(2, 0, 1)
+            img = np.expand_dims(img, axis=0)
+            img = np.repeat(img, 1, axis=0)
+            img = img.astype('float32') / 255.0
+            batch.append(img)
+
         batch = np.stack(batch)
         assert batch.nbytes == self.blob_size
 
@@ -151,3 +191,15 @@ class YOLOEntropyCalibrator(trt.IInt8EntropyCalibrator2):
     def write_calibration_cache(self, cache):
         with open(self.cache_file, 'wb') as f:
             f.write(cache)
+
+    def get_quantile(self):
+        return 0.9999
+
+    def get_regression_cutoff(self):
+        return 1.0
+
+    def read_histogram_cache(self, length):
+        return None
+
+    def write_histogram_cache(self, ptr, length):
+        return None

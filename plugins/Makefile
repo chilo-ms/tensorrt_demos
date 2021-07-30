@@ -2,7 +2,7 @@ CC=g++
 LD=ld
 CXXFLAGS=-Wall -std=c++11 -g -O
 
-NVCC=nvcc
+NVCC=/usr/local/cuda/bin/nvcc
 
 # space separated compute values ex: computes=70 75. If not present will fetch device's CC
 computes=
@@ -16,8 +16,10 @@ NVCCFLAGS= $(foreach compute, $(computes),-gencode arch=compute_$(compute),code=
 $(info NVCCFLAGS: $(NVCCFLAGS))
 
 # These are the directories where I installed TensorRT on my x86_64 PC.
-TENSORRT_INCS=-I"/usr/local/TensorRT-7.1.3.4/include"
-TENSORRT_LIBS=-L"/usr/local/TensorRT-7.1.3.4/lib"
+#TENSORRT_INCS=-I"/usr/local/TensorRT-7.1.3.4/include"
+#TENSORRT_LIBS=-L"/usr/local/TensorRT-7.1.3.4/lib"
+TENSORRT_INCS=-I"/home/hcsuser/tensorrt/TensorRT-7.2.2.3/include"
+TENSORRT_LIBS=-I"/home/hcsuser/tensorrt/TensorRT-7.2.2.3/lib"
 
 # INCS and LIBS
 INCS=-I"/usr/local/cuda/include" $(TENSORRT_INCS) -I"/usr/local/include" -I"plugin"
